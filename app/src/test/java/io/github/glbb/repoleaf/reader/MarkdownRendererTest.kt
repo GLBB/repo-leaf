@@ -30,10 +30,45 @@ class MarkdownRendererTest {
         assertTrue(html.contains("<nav class=\"toc\""))
         assertTrue(html.contains("aria-label=\"目录\""))
         assertFalse(html.contains("<details"))
+        assertTrue(html.contains("table-shell table-compact"))
+        assertTrue(html.contains("table-hint"))
+        assertTrue(html.contains("table-scroll"))
+        assertTrue(html.contains("table-resize-handle"))
+        assertTrue(html.contains("repoleaf-table-widths:"))
         assertTrue(html.contains("<table>"))
         assertTrue(html.contains("type=\"checkbox\""))
         assertTrue(html.contains("<del>old</del>"))
         assertFalse(html.contains("Hidden metadata"))
+    }
+
+    @Test fun `sanitizes unsafe markdown URLs before enabling table gestures`() {
+        val file = temporaryFolder.newFile("unsafe-link.md").apply {
+            writeText("[unsafe](javascript:alert('x'))")
+        }
+
+        val html = MarkdownRenderer.render(file, dark = false, fontScale = 1f).html
+
+        assertFalse(html.contains("javascript:alert"))
+    }
+
+    @Test fun `wide tables use horizontal reading treatment`() {
+        val file = temporaryFolder.newFile("wide.md").apply {
+            writeText(
+                """
+                | 指标 | 2024 | 2025 | 2026 | 说明 |
+                |---|---|---|---|---|
+                | 收入 | 1 | 2 | 3 | 长文本说明 |
+                """.trimIndent(),
+            )
+        }
+
+        val html = MarkdownRenderer.render(file, dark = false, fontScale = 1f).html
+
+        assertTrue(html.contains("table-shell table-wide"))
+        assertTrue(html.contains("data-columns=\"5\""))
+        assertFalse(html.contains("--table-width"))
+        assertTrue(html.contains("table.style.width = widths.reduce"))
+        assertFalse(html.contains("position:sticky"))
     }
 
     @Test fun `local links cannot escape repository root`() {

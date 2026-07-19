@@ -447,7 +447,8 @@ private fun ReaderScreen(
             factory = { ctx ->
                 WebView(ctx).apply {
                     activeWebView.value = this
-                    settings.javaScriptEnabled = false
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
                     settings.allowFileAccess = true
                     settings.allowContentAccess = false
                     settings.allowFileAccessFromFileURLs = false
@@ -466,7 +467,7 @@ private fun ReaderScreen(
                             val uri = request?.url ?: return true
                             // Preserve in-page anchor navigation for the generated table of contents.
                             // The WebView can perform this without JavaScript when the base URL is the document.
-                            if (uri.fragment != null) return false
+                            if (uri.scheme == "file" && uri.fragment != null) return false
                             if (uri.scheme == "file") {
                                 val target = MarkdownRenderer.resolveLocalLink(document.file, repositoryRoot, uri.path.orEmpty())
                                 target?.takeIf { it.extension.equals("md", true) }?.let(onLocalLink)
