@@ -38,6 +38,7 @@ RepositoryProvider -> SnapshotSync -> Local files
 ## 迭代拆分
 
 - M0（当前）：可构建 Compose 工程、首页交互稿、调研和环境脚本。
-- M1：公开仓库快照同步、文件树、Markdown/HTML 阅读、阅读进度。
-- M2：私有仓库 Token、PDF、XLSX、搜索、收藏、后台同步。
-- M3：增量同步、GitLab/Gitea provider、平板自适应、性能与无障碍。
+- M1：多仓库配置、GitHub App 登录、公共/私有 GitHub 仓库快照同步、文件树和本地索引。
+- M2：Markdown 深度阅读、目录、内部链接、图片、代码块、主题、收藏和阅读进度。
+- M3：跨仓库搜索、凭证刷新与撤销、性能、安全、兼容性与发布回归。
+- Post-MVP：HTML、PDF、XLSX 内置渲染，GitLab/Gitea Provider、平板自适应。

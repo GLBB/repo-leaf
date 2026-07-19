@@ -16,6 +16,9 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val githubClientId = providers.gradleProperty("REPOLEAF_GITHUB_CLIENT_ID").orNull ?: ""
+        buildConfigField("String", "GITHUB_CLIENT_ID", "\"$githubClientId\"")
     }
 
     buildFeatures {
@@ -57,6 +60,13 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     // 2.11.0 requires AGP 9.1 / compileSdk 37; keep the API 36 baseline stable.
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.commonmark:commonmark:0.24.0")
+    implementation("org.commonmark:commonmark-ext-autolink:0.24.0")
+    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.24.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
+    implementation("org.commonmark:commonmark-ext-task-list-items:0.24.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
