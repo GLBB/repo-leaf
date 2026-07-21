@@ -1,7 +1,10 @@
 package io.github.glbb.repoleaf
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -10,7 +13,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +26,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +53,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,8 +75,15 @@ import io.github.glbb.repoleaf.domain.KnowledgeDocument
 import io.github.glbb.repoleaf.domain.RepositoryConfig
 import io.github.glbb.repoleaf.domain.ReadingState
 import io.github.glbb.repoleaf.reader.MarkdownRenderer
+import io.github.glbb.repoleaf.speech.SpeechController
+import io.github.glbb.repoleaf.speech.LocalTtsEngine
+import io.github.glbb.repoleaf.speech.SpeechPlaybackStatus
+import io.github.glbb.repoleaf.speech.SpeechUiState
+import io.github.glbb.repoleaf.speech.SpeechUiStore
+import io.github.glbb.repoleaf.speech.SpeechVoice
 import java.text.DateFormat
 import java.util.Date
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,6 +96,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RepoLeafApp(vm: RepoLeafViewModel = viewModel()) {
     val state = vm.state
+    val speech by SpeechUiStore.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error, state.status) {
         (state.error ?: state.status)?.let {
@@ -89,7 +107,7 @@ private fun RepoLeafApp(vm: RepoLeafViewModel = viewModel()) {
     BackHandler(enabled = state.screen != AppScreen.Repositories) { vm.back() }
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            when (val screen = state.screen) {
+            Box(Modifier.fillMaxSize()) { when (val screen = state.screen) {
                 AppScreen.Repositories -> RepositoryScreen(
                     repositories = state.repositories,
                     documents = state.allDocuments,
@@ -138,9 +156,82 @@ private fun RepoLeafApp(vm: RepoLeafViewModel = viewModel()) {
                 )
                 AppScreen.GitHubLogin -> GitHubLoginScreen(state.deviceCode, state.loading, snackbar) { vm.back() }
             }
+                if (speech.status in setOf(SpeechPlaybackStatus.Preparing, SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused)) {
+                    GlobalSpeechMiniPlayer(speech, Modifier.align(Alignment.BottomCenter))
+                }
+                if (speech.status == SpeechPlaybackStatus.Failed) {
+                    SpeechUnavailableCard(speech, Modifier.align(Alignment.BottomCenter))
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun GlobalSpeechMiniPlayer(speech: SpeechUiState, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Card(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+            .testTag("speech-mini-player"),
+        shape = RoundedCornerShape(18.dp), elevation = CardDefaults.cardElevation(5.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (speech.status == SpeechPlaybackStatus.Preparing) "正在准备本地朗读" else speech.title,
+                        maxLines = 1, fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        if (speech.status == SpeechPlaybackStatus.Playing) "正在朗读 · ${formatSpeechTime(speech.positionMs)}" else "已暂停 · ${formatSpeechTime(speech.positionMs)}",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        val speeds = listOf(.75f, 1f, 1.25f, 1.5f, 2f)
+                        val current = speeds.indexOfFirst { it == speech.speed }.takeIf { it >= 0 } ?: 1
+                        SpeechController.send(context, SpeechController.ACTION_SET_SPEED, speeds[(current + 1) % speeds.size])
+                    },
+                    enabled = speech.status != SpeechPlaybackStatus.Preparing,
+                ) { Text("${speech.speed}×") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_STOP) }) { Text("关闭") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_PREVIOUS) }, enabled = speech.status != SpeechPlaybackStatus.Preparing) { Text("上一段") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_REWIND) }, enabled = speech.status != SpeechPlaybackStatus.Preparing) { Text("−15") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_TOGGLE) }, enabled = speech.status != SpeechPlaybackStatus.Preparing) { Text(if (speech.status == SpeechPlaybackStatus.Playing) "暂停" else "播放") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_FORWARD) }, enabled = speech.status != SpeechPlaybackStatus.Preparing) { Text("+15") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_NEXT) }, enabled = speech.status != SpeechPlaybackStatus.Preparing) { Text("下一段") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeechUnavailableCard(speech: SpeechUiState, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Card(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag("speech-unavailable"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("无法开始本地朗读", fontWeight = FontWeight.SemiBold)
+            Text(
+                speech.message ?: "请安装系统中文离线语音数据后重试。",
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { SpeechController.openSystemTtsSettings(context) }) { Text("安装离线语音") }
+                TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_STOP) }) { Text("关闭") }
+            }
+        }
+    }
+}
+
+private fun formatSpeechTime(positionMs: Long): String = "%d:%02d".format(positionMs / 60_000, (positionMs / 1_000) % 60)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -410,6 +501,12 @@ private fun ReaderScreen(
         return
     }
     val context = LocalContext.current
+    val speech by SpeechUiStore.state.collectAsState()
+    var followSpeech by remember(document.id) { mutableStateOf(true) }
+    var showVoicePicker by remember(document.id) { mutableStateOf(false) }
+    var offlineVoices by remember(document.id) { mutableStateOf<List<SpeechVoice>>(emptyList()) }
+    var voiceLoadError by remember(document.id) { mutableStateOf<String?>(null) }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val repositoryRoot = remember(documents) { documents.firstOrNull()?.file?.let { first ->
         generateSequence(first.parentFile) { it.parentFile }.firstOrNull { candidate ->
             documents.all { doc -> doc.file.canonicalFile.toPath().startsWith(candidate.canonicalFile.toPath()) }
@@ -427,19 +524,61 @@ private fun ReaderScreen(
             activeWebView.value = null
         }
     }
+    LaunchedEffect(speech.documentId, speech.blockId, followSpeech, document.id) {
+        if (speech.documentId == document.id && speech.blockId != null) {
+            val block = JSONObject.quote(speech.blockId)
+            activeWebView.value?.evaluateJavascript(
+                "window.repoleafSpeech && window.repoleafSpeech.highlight($block, $followSpeech)",
+                null,
+            )
+        }
+    }
+    LaunchedEffect(showVoicePicker) {
+        if (showVoicePicker) {
+            val engine = LocalTtsEngine(context)
+            runCatching { engine.availableVoices() }
+                .onSuccess { offlineVoices = it; voiceLoadError = null }
+                .onFailure { voiceLoadError = it.message ?: "无法读取系统音色" }
+            engine.close()
+        }
+    }
+    fun startSpeech(voiceId: String? = null) {
+        SpeechController.play(context, document.id, document.file.canonicalPath, rendered.title, voiceId)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     Scaffold(
         containerColor = if (dark) Color(0xFF101418) else MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(rendered.title, maxLines = 1) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("‹ 返回") } },
-                actions = {
+            // A title plus seven text actions cannot fit on a phone. Keep all controls in a
+            // horizontally-scrollable toolbar instead of allowing app-bar slots to overlap.
+            Surface(color = if (dark) Color(0xFF101418) else MaterialTheme.colorScheme.background) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .heightIn(min = 56.dp)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onBack) { Text("‹ 返回", maxLines = 1) }
+                    TextButton(onClick = {
+                        if (speech.documentId == document.id && speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused, SpeechPlaybackStatus.Preparing)) {
+                            SpeechController.send(context, SpeechController.ACTION_TOGGLE)
+                        } else startSpeech()
+                    }, modifier = Modifier.testTag("speech-play")) {
+                        Text(if (speech.documentId == document.id && speech.status == SpeechPlaybackStatus.Playing) "暂停" else "听全文", maxLines = 1)
+                    }
                     TextButton(onClick = onFavorite, modifier = Modifier.testTag("reader-favorite")) { Text(if (favorite) "★" else "☆") }
-                    TextButton(onClick = { onScale(scale - .1f) }) { Text("A−") }
-                    TextButton(onClick = { onScale(scale + .1f) }) { Text("A+") }
-                    TextButton(onClick = onTheme) { Text(if (dark) "浅色" else "深色") }
-                },
-            )
+                    TextButton(onClick = { followSpeech = !followSpeech }, modifier = Modifier.testTag("speech-follow")) { Text(if (followSpeech) "跟随" else "手动", maxLines = 1) }
+                    TextButton(onClick = { showVoicePicker = true }, modifier = Modifier.testTag("speech-voice")) { Text("音色", maxLines = 1) }
+                    TextButton(onClick = { onScale(scale - .1f) }) { Text("A−", maxLines = 1) }
+                    TextButton(onClick = { onScale(scale + .1f) }) { Text("A+", maxLines = 1) }
+                    TextButton(onClick = onTheme) { Text(if (dark) "浅色" else "深色", maxLines = 1) }
+                }
+            }
         },
     ) { padding ->
         AndroidView(
@@ -497,6 +636,25 @@ private fun ReaderScreen(
             },
         )
     }
+    if (showVoicePicker) AlertDialog(
+        onDismissRequest = { showVoicePicker = false },
+        title = { Text("选择离线中文音色") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (offlineVoices.isEmpty() && voiceLoadError == null) Text("正在检测系统离线音色…")
+                voiceLoadError?.let { Text("$it。请在系统“文字转语音输出”中安装中文离线语音数据。") }
+                offlineVoices.forEach { voice ->
+                    TextButton(onClick = { showVoicePicker = false; startSpeech(voice.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(voice.name)
+                            Text("${voice.locale.displayName} · 离线", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showVoicePicker = false }) { Text("关闭") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

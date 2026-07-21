@@ -23,7 +23,11 @@ object MarkdownRenderer {
     fun render(file: File, dark: Boolean, fontScale: Float): RenderedMarkdown {
         val source = file.readText().removeFrontMatter()
         val rawHtml = renderer.render(parser.parse(source))
-        val (anchoredBody, toc) = addHeadingAnchors(rawHtml)
+        val (anchoredBody, generatedToc) = addHeadingAnchors(rawHtml)
+        // Many repository READMEs already maintain a hand-written "目录" section. Showing a
+        // second generated outline above it is redundant and can look like a clipped empty box
+        // in Android WebView.
+        val toc = if (source.hasExplicitTableOfContents()) "" else generatedToc
         val body = makeTablesMobileFriendly(anchoredBody)
         val title = Regex("(?m)^#\\s+(.+)$").find(source)?.groupValues?.get(1)?.trim()
             ?: file.nameWithoutExtension
@@ -70,11 +74,12 @@ object MarkdownRenderer {
               .table-compact th,.table-compact td { padding:8px; }
               .table-compact .table-hint,.table-compact::after { display:none; }
               @media (min-width:600px) { .table-hint { display:none; } .table-shell::after { display:none; } }
-              .toc { max-height:34vh; overflow-y:auto; padding:14px 16px; border:1px solid $border; border-radius:10px; background:$code; }
+              .toc { margin:0 0 28px; padding:14px 16px; border:1px solid $border; border-radius:10px; background:$code; }
               .toc-title { display:block; margin-bottom:8px; font-weight:600; }
-              .toc ul { margin:0; padding-left:22px; }
-              .toc li { margin:4px 0; }
+              .toc ul { margin:0; padding:0; list-style:none; }
+              .toc li { margin:6px 0; line-height:1.45; }
               input[type=checkbox] { transform:scale(1.15); margin-right:.45em; }
+              [data-speech-block].speech-current { background:rgba(56,139,253,.16); border-radius:8px; box-shadow:0 0 0 4px rgba(56,139,253,.08); }
             </style></head><body>$toc$body
             <script>
               (() => {
@@ -147,7 +152,27 @@ object MarkdownRenderer {
                   });
                 }
 
+                function annotateSpeechBlocks() {
+                  Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,.table-shell"))
+                    .filter((element) => !element.closest(".toc"))
+                    .forEach((element, index) => {
+                    element.dataset.speechBlock = "speech-" + String(index).padStart(4, "0");
+                  });
+                }
+
+                window.repoleafSpeech = {
+                  highlight(blockId, follow) {
+                    document.querySelectorAll(".speech-current").forEach((element) => element.classList.remove("speech-current"));
+                    const target = document.querySelector('[data-speech-block="' + blockId + '"]');
+                    if (!target) return false;
+                    target.classList.add("speech-current");
+                    if (follow) target.scrollIntoView({ behavior:"smooth", block:"center" });
+                    return true;
+                  }
+                };
+
                 document.addEventListener("DOMContentLoaded", () => {
+                  annotateSpeechBlocks();
                   document.querySelectorAll(".table-shell").forEach(setupTable);
                 });
               })();
@@ -169,6 +194,11 @@ object MarkdownRenderer {
         val match = Regex("\\A---\\R.*?\\R---\\R", RegexOption.DOT_MATCHES_ALL).find(this) ?: return this
         return removeRange(match.range)
     }
+
+    private fun String.hasExplicitTableOfContents(): Boolean =
+        Regex(
+            "(?im)^#{1,6}\\s*(目录|目錄|table\\s+of\\s+contents|contents)\\s*$",
+        ).containsMatchIn(this)
 
     private fun addHeadingAnchors(html: String): Pair<String, String> {
         val headings = mutableListOf<Triple<Int, String, String>>()

@@ -35,6 +35,9 @@ class MarkdownRendererTest {
         assertTrue(html.contains("table-scroll"))
         assertTrue(html.contains("table-resize-handle"))
         assertTrue(html.contains("repoleaf-table-widths:"))
+        assertTrue(html.contains("speechBlock"))
+        assertTrue(html.contains("repoleafSpeech"))
+        assertTrue(html.contains("speech-current"))
         assertTrue(html.contains("<table>"))
         assertTrue(html.contains("type=\"checkbox\""))
         assertTrue(html.contains("<del>old</del>"))
@@ -49,6 +52,27 @@ class MarkdownRendererTest {
         val html = MarkdownRenderer.render(file, dark = false, fontScale = 1f).html
 
         assertFalse(html.contains("javascript:alert"))
+    }
+
+    @Test fun `does not duplicate a repository maintained table of contents`() {
+        val file = temporaryFolder.newFile("readme.md").apply {
+            writeText(
+                """
+                # Knowledge
+
+                ## 目录
+                - [Agent](#agent)
+
+                ## Agent
+                正文
+                """.trimIndent(),
+            )
+        }
+
+        val html = MarkdownRenderer.render(file, dark = false, fontScale = 1f).html
+
+        assertFalse(html.contains("<nav class=\"toc\""))
+        assertTrue(html.contains("<h2 id=\"目录\">目录</h2>"))
     }
 
     @Test fun `wide tables use horizontal reading treatment`() {

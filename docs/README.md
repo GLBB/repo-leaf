@@ -7,6 +7,13 @@
 - [MVP 测试方案](mvp-test-plan.md)：测试范围、环境矩阵、用例、性能指标和发布门禁
 - [MVP 验证记录](mvp-validation.md)：自动化门禁、真实仓库 E2E 结果和已知边界
 
+## 语音朗读 0.2 方案
+
+- [语音朗读产品方案](voice-reading-product.md)：本地免费方案的产品形态、朗读规则、后台体验与验收标准
+- [语音朗读技术方案](voice-reading-technical.md)：本地 TTS 分段合成、Media3 后台播放、缓存、隐私与实现顺序
+- [语音朗读测试方案](voice-reading-test-plan.md)：设备矩阵、中文质量、后台稳定性、隐私测试与发布门禁
+- [语音朗读验证记录](voice-reading-validation.md)：构建、设备验证结果和离线音色前置条件
+
 ## 背景资料
 
 - [同类开源项目调研](research.md)
@@ -20,3 +27,7 @@
 | MVP 技术方案 | Draft | `0.1.x` |
 | MVP 测试方案 | Draft | `0.1.x` |
 | MVP 验证记录 | Verified | `0.1.x` |
+| 语音朗读产品方案 | Draft | `0.2.x` |
+| 语音朗读技术方案 | Draft | `0.2.x` |
+| 语音朗读测试方案 | Draft | `0.2.x` |
+| 语音朗读验证记录 | In progress | `0.2.x` |
