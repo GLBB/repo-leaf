@@ -106,4 +106,15 @@ class MarkdownRendererTest {
         assertTrue(MarkdownRenderer.resolveLocalLink(current, root, "../../secret.md") == null)
         assertTrue(outside.exists())
     }
+
+    @Test fun `WebView resolved absolute local paths open the target Markdown`() {
+        val root = temporaryFolder.newFolder("repo")
+        val docs = root.resolve("docs").apply { mkdirs() }
+        val current = docs.resolve("current.md").apply { writeText("current") }
+        val target = root.resolve("guide.md").apply { writeText("target") }
+
+        assertTrue(
+            MarkdownRenderer.resolveLocalLink(current, root, target.absolutePath + "#install") == target.canonicalFile,
+        )
+    }
 }

@@ -59,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -845,60 +846,65 @@ private fun ReaderScreen(
             )
         },
     ) { padding ->
-        AndroidView(
-            modifier = Modifier.fillMaxSize().padding(padding).zIndex(0f).testTag("markdown-reader"),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    activeWebView.value = this
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.allowFileAccess = true
-                    settings.allowContentAccess = false
-                    settings.allowFileAccessFromFileURLs = false
-                    settings.allowUniversalAccessFromFileURLs = false
-                    setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                        if (kotlin.math.abs(scrollY - lastSavedScroll[0]) >= 64) {
-                            lastSavedScroll[0] = scrollY
-                            onProgress(scrollY)
+        // A WebView must not survive a document change: the old document's DisposableEffect
+        // destroys it to release resources. Reusing that destroyed native view caused a blank page
+        // after opening an in-repository Markdown link.
+        key(document.id) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize().padding(padding).zIndex(0f).testTag("markdown-reader"),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        activeWebView.value = this
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.allowFileAccess = true
+                        settings.allowContentAccess = false
+                        settings.allowFileAccessFromFileURLs = false
+                        settings.allowUniversalAccessFromFileURLs = false
+                        setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                            if (kotlin.math.abs(scrollY - lastSavedScroll[0]) >= 64) {
+                                lastSavedScroll[0] = scrollY
+                                onProgress(scrollY)
+                            }
                         }
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            view?.post { view.scrollTo(0, initialScroll) }
-                        }
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                            val uri = request?.url ?: return true
-                            // Preserve in-page anchor navigation for the generated table of contents.
-                            // The WebView can perform this without JavaScript when the base URL is the document.
-                            if (uri.scheme == "file" && uri.fragment != null) return false
-                            if (uri.scheme == "file") {
-                                val target = MarkdownRenderer.resolveLocalLink(document.file, repositoryRoot, uri.path.orEmpty())
-                                target?.takeIf { it.extension.equals("md", true) }?.let(onLocalLink)
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                view?.post { view.scrollTo(0, initialScroll) }
+                            }
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val uri = request?.url ?: return true
+                                if (uri.scheme == "file") {
+                                    val target = MarkdownRenderer.resolveLocalLink(document.file, repositoryRoot, uri.path.orEmpty())
+                                    // Only an anchor that resolves to this exact document stays inside WebView. A link
+                                    // such as ../guide.md#install must open guide.md instead of being treated as a TOC link.
+                                    if (target == document.file.canonicalFile && uri.fragment != null) return false
+                                    target?.takeIf { it.extension.equals("md", true) }?.let(onLocalLink)
+                                    return true
+                                }
+                                if (uri.scheme in setOf("http", "https")) {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                }
                                 return true
                             }
-                            if (uri.scheme in setOf("http", "https")) {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-                            }
-                            return true
                         }
                     }
-                }
-            },
-            update = { webView ->
-                // update runs after every Compose recomposition, including progress saves.
-                // Reload only when document appearance actually changes; otherwise scrolling resets to the top.
-                if (webView.tag != rendered.html) {
-                    webView.tag = rendered.html
-                    webView.loadDataWithBaseURL(
-                        document.file.canonicalFile.toURI().toString(),
-                        rendered.html,
-                        "text/html",
-                        "UTF-8",
-                        null,
-                    )
-                }
-            },
-        )
+                },
+                update = { webView ->
+                    // update runs after every Compose recomposition, including progress saves.
+                    // Reload only when document appearance actually changes; otherwise scrolling resets to the top.
+                    if (webView.tag != rendered.html) {
+                        webView.tag = rendered.html
+                        webView.loadDataWithBaseURL(
+                            document.file.canonicalFile.toURI().toString(),
+                            rendered.html,
+                            "text/html",
+                            "UTF-8",
+                            null,
+                        )
+                    }
+                },
+            )
+        }
     }
     if (showSettings) SpeechAndReadingSettingsDialog(
         preferences = speechPreferences,

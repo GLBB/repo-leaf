@@ -185,7 +185,11 @@ object MarkdownRenderer {
         val clean = link.substringBefore('#').substringBefore('?')
         if (clean.isBlank()) return current
         val decoded = runCatching { java.net.URLDecoder.decode(clean, "UTF-8") }.getOrDefault(clean)
-        val target = File(current.parentFile, decoded).canonicalFile
+        // WebView resolves a relative Markdown link against loadDataWithBaseURL and supplies an
+        // absolute /data/... file path here. Joining that path to current.parentFile produces an
+        // invalid nested path, so preserve absolute paths and resolve only genuine relative ones.
+        val requested = File(decoded)
+        val target = (if (requested.isAbsolute) requested else File(current.parentFile, decoded)).canonicalFile
         return target.takeIf { it.toPath().startsWith(root.canonicalFile.toPath()) && it.isFile }
     }
 
