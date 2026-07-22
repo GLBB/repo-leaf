@@ -35,7 +35,7 @@ flowchart LR
     H --> I["MediaSessionService"]
     I --> J["通知栏/锁屏/耳机"]
     I --> K["Compose SpeechController"]
-    K --> L["迷你播放器/完整播放器/正文高亮"]
+    K --> L["迷你播放器/完整播放器"]
 ```
 
 ### 2.1 模块职责
@@ -83,7 +83,7 @@ data class SpeechPlaybackState(
 
 - `documentId` 由仓库标识、分支和文档路径稳定生成，日志中只记录不可逆摘要。
 - `contentHash` 基于源文档内容和朗读规则版本生成；正文或规则变化会自动失效旧缓存。
-- `blockId` 与渲染器 DOM/Compose 块 ID 对齐，用于高亮和点击段落开播。
+- `blockId` 用于后台恢复精确的段落播放位置；阅读页不因播放状态改变而自动滚动。
 - 状态使用 DataStore 保存；写入按段切换、暂停、退到后台和定时节流触发。
 
 ## 4. 文本提取与中文规范化
@@ -120,13 +120,13 @@ data class SpeechPlaybackState(
 
 ### 5.1 音色发现
 
-TTS 初始化成功后读取可用 `Voice`，只展示满足以下条件的音色：
+应用通过 `TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE` 枚举所有已安装引擎；每个引擎单独初始化并读取可用 `Voice`，只展示满足以下条件的音色：
 
 - `Locale` 为中文或用户允许的其他语言；
 - `isNetworkConnectionRequired == false`；
 - 引擎报告为可用。
 
-默认音色按语言匹配、质量、延迟和用户历史选择排序。UI 展示 TTS 引擎包名、音色名、区域、质量和离线状态。切换音色会更换缓存键，但不删除旧缓存。
+音色稳定 ID 由 `enginePackage:voiceName` 构成，避免不同引擎同名音色冲突。默认音色按语言匹配、质量、延迟和用户历史选择排序。UI 展示 TTS 引擎名称、音色名、区域和离线状态。切换音色会更换缓存键，但不删除旧缓存。
 
 ### 5.2 合成调度
 
@@ -212,12 +212,7 @@ Android 15 对音频焦点有更严格的前台限制，因此播放必须由正
 
 Compose 侧通过 `MediaController` 连接服务，所有页面观察统一 `SpeechUiState`，避免页面直接持有播放器。
 
-Markdown 渲染时为每个可朗读块注入稳定 `blockId`。播放段变化后：
-
-1. 服务通过 MediaSession extras/custom layout 或共享状态发布当前 `blockId`；
-2. 阅读页调用 WebView JavaScript/Compose 状态设置高亮；
-3. 开启跟随时滚动到该块；
-4. 用户主动滚动后进入“手动阅读”状态，直到点击回到朗读位置。
+Markdown 渲染时为每个可朗读块注入稳定 `blockId`，仅用于服务恢复段落位置和未来的显式跳转；播放段变化不会驱动正文高亮或滚动，用户可独立浏览页面。
 
 自定义命令用于“上一段、下一段、从 blockId 开始、表格逐行朗读”，标准播放命令继续用于通知栏和外部设备兼容。
 
@@ -257,7 +252,7 @@ interface SpeechProvider {
 2. 实现 `LocalTtsEngine`、音色发现、逐段文件合成与缓存。
 3. 接入 Media3 服务、媒体通知、音频焦点和恢复状态。
 4. 完成文章入口、迷你播放器、完整播放器和倍速控制。
-5. 完成正文高亮、点击段落开播和滚动跟随。
+5. 保持播放状态与正文阅读解耦，避免朗读打断用户手动浏览。
 6. 补齐异常引导、缓存设置、隐私检查及真机端到端验证。
 
 ## 12. 官方参考

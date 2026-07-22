@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,10 +44,12 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,10 +67,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.glbb.repoleaf.app.RepoLeafViewModel
 import io.github.glbb.repoleaf.domain.AppScreen
@@ -76,14 +81,21 @@ import io.github.glbb.repoleaf.domain.RepositoryConfig
 import io.github.glbb.repoleaf.domain.ReadingState
 import io.github.glbb.repoleaf.reader.MarkdownRenderer
 import io.github.glbb.repoleaf.speech.SpeechController
-import io.github.glbb.repoleaf.speech.LocalTtsEngine
+import io.github.glbb.repoleaf.speech.LocalTtsCatalog
+import io.github.glbb.repoleaf.speech.MimoTts
+import io.github.glbb.repoleaf.speech.MimoTtsCredentialStore
 import io.github.glbb.repoleaf.speech.SpeechPlaybackStatus
+import io.github.glbb.repoleaf.speech.SpeechPreferences
+import io.github.glbb.repoleaf.speech.SpeechPreferencesStore
+import io.github.glbb.repoleaf.speech.SpeechPresets
 import io.github.glbb.repoleaf.speech.SpeechUiState
 import io.github.glbb.repoleaf.speech.SpeechUiStore
 import io.github.glbb.repoleaf.speech.SpeechVoice
+import io.github.glbb.repoleaf.speech.SpeechVoicePack
+import io.github.glbb.repoleaf.speech.SpeechVoicePackCatalog
+import io.github.glbb.repoleaf.speech.SpeechVoicePackStatus
 import java.text.DateFormat
 import java.util.Date
-import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -183,18 +195,24 @@ private fun GlobalSpeechMiniPlayer(speech: SpeechUiState, modifier: Modifier = M
                         maxLines = 1, fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        if (speech.status == SpeechPlaybackStatus.Playing) "正在朗读 · ${formatSpeechTime(speech.positionMs)}" else "已暂停 · ${formatSpeechTime(speech.positionMs)}",
+                        buildString {
+                            append(
+                                when (speech.status) {
+                                    SpeechPlaybackStatus.Playing -> "正在朗读"
+                                    SpeechPlaybackStatus.Preparing -> "正在缓冲"
+                                    else -> "已暂停"
+                                },
+                            )
+                            append(" · 已朗读 ${formatSpeechTime(speech.elapsedPlaybackMs)} · ${speech.speed}×")
+                            if (speech.sleepMode) append(" · 睡眠模式")
+                            speech.sleepTimerEndsAtMillis?.let { deadline ->
+                                val remaining = ((deadline - System.currentTimeMillis()).coerceAtLeast(0L) + 59_999L) / 60_000L
+                                append(" · ${remaining}分钟后停止")
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(
-                    onClick = {
-                        val speeds = listOf(.75f, 1f, 1.25f, 1.5f, 2f)
-                        val current = speeds.indexOfFirst { it == speech.speed }.takeIf { it >= 0 } ?: 1
-                        SpeechController.send(context, SpeechController.ACTION_SET_SPEED, speeds[(current + 1) % speeds.size])
-                    },
-                    enabled = speech.status != SpeechPlaybackStatus.Preparing,
-                ) { Text("${speech.speed}×") }
                 TextButton(onClick = { SpeechController.send(context, SpeechController.ACTION_STOP) }) { Text("关闭") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -382,6 +400,261 @@ private fun AddRepositoryDialog(
     )
 }
 
+@Composable
+internal fun ReaderToolbar(
+    title: String,
+    dark: Boolean,
+    playing: Boolean,
+    favorite: Boolean,
+    onBack: () -> Unit,
+    onPlay: () -> Unit,
+    onFavorite: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    Surface(color = if (dark) Color(0xFF101418) else MaterialTheme.colorScheme.background) {
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp).padding(horizontal = 4.dp).zIndex(1f)
+                .testTag("reader-toolbar"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onBack, modifier = Modifier.testTag("reader-back")) { Text("‹ 返回", maxLines = 1) }
+            Text(
+                title,
+                modifier = Modifier.weight(1f).testTag("reader-toolbar-title"),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.SemiBold,
+            )
+            TextButton(onClick = onPlay, modifier = Modifier.testTag("speech-play")) {
+                Text(if (playing) "暂停" else "朗读", maxLines = 1)
+            }
+            TextButton(onClick = onFavorite, modifier = Modifier.testTag("reader-favorite")) { Text(if (favorite) "★" else "☆") }
+            TextButton(onClick = onSettings, modifier = Modifier.testTag("reader-settings")) { Text("设置", maxLines = 1) }
+        }
+    }
+}
+
+@Composable
+private fun SpeechAndReadingSettingsDialog(
+    preferences: SpeechPreferences,
+    voices: List<SpeechVoice>,
+    voicePacks: List<SpeechVoicePack>,
+    voicesLoading: Boolean,
+    voiceLoadError: String?,
+    mimoConfigured: Boolean,
+    dark: Boolean,
+    scale: Float,
+    onDismiss: () -> Unit,
+    onVoice: (SpeechVoice) -> Unit,
+    onMimoEnabled: (Boolean) -> Unit,
+    onMimoVoice: (String) -> Unit,
+    onMimoStyle: (String) -> Unit,
+    onConfigureMimo: () -> Unit,
+    onSpeed: (Float) -> Unit,
+    onSleepMode: (Boolean) -> Unit,
+    onSleepTimer: (Int) -> Unit,
+    onManageSystemVoice: () -> Unit,
+    onConfigureVoiceEngine: (String) -> Unit,
+    onVoicePack: (SpeechVoicePack) -> Unit,
+    onScale: (Float) -> Unit,
+    onTheme: () -> Unit,
+) {
+    val selectedVoiceId = preferences.voiceId.ifBlank { voices.firstOrNull()?.id.orEmpty() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("设置") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("朗读", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("MiMo 云端自然朗读", fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        if (mimoConfigured) onMimoEnabled(!preferences.mimoEnabled) else onConfigureMimo()
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (mimoConfigured) "${if (preferences.mimoEnabled) "已启用" else "未启用"} · ${preferences.mimoVoice}" else "尚未配置 API Key")
+                        Text(
+                            "启用后仅发送当前朗读分段到 MiMo；密钥加密保存在本机。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = preferences.mimoEnabled,
+                        enabled = mimoConfigured,
+                        onCheckedChange = onMimoEnabled,
+                    )
+                }
+                TextButton(onClick = onConfigureMimo) {
+                    Text(if (mimoConfigured) "更新或清除 MiMo API Key" else "配置 MiMo API Key")
+                }
+                if (mimoConfigured) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                        MimoTts.voices.forEach { voice ->
+                            TextButton(onClick = { onMimoVoice(voice.id) }) {
+                                Text(if (preferences.mimoVoice == voice.id) "● ${voice.label}" else voice.label, maxLines = 1)
+                            }
+                        }
+                    }
+                    Text("MiMo 朗读风格", fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                        MimoTts.styles.forEach { style ->
+                            TextButton(onClick = { onMimoStyle(style.id) }) {
+                                Text(if (preferences.mimoStyle == style.id) "● ${style.label}" else style.label, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+
+                Text("中文离线音色", fontWeight = FontWeight.SemiBold)
+                if (voicesLoading) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator()
+                        Text("正在检测已安装的 TTS 引擎…")
+                    }
+                }
+                if (!voicesLoading && voices.isEmpty() && voiceLoadError == null) {
+                    Text("当前没有可用的中文离线音色，可管理系统语音或安装下面的本地音色包。")
+                }
+                voiceLoadError?.let {
+                    Text("$it。可管理系统语音，或安装下面的本地音色包。", color = MaterialTheme.colorScheme.error)
+                }
+                voices.groupBy(SpeechVoice::engineName).forEach { (engineName, engineVoices) ->
+                    Text(engineName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    engineVoices.forEach { voice ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { onVoice(voice) }.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selectedVoiceId == voice.id, onClick = { onVoice(voice) })
+                            Column(Modifier.weight(1f)) {
+                                Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${voice.locale.displayName} · 离线", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = onManageSystemVoice) { Text("管理系统语音") }
+                voices.firstOrNull { it.enginePackage.contains("sherpa", ignoreCase = true) }?.let { sherpaVoice ->
+                    TextButton(onClick = { onConfigureVoiceEngine(sherpaVoice.enginePackage) }) {
+                        Text("配置 Kokoro 音色（Speaker ID）")
+                    }
+                    Text(
+                        "Kokoro 为实验性音色：3–57 为中文女声，58–102 为中文男声。其中文技术文本可能出现不自然发音，建议日常正文使用系统语音。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Text("语速", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    SpeechPresets.supportedSpeeds.forEach { speed ->
+                        TextButton(onClick = { onSpeed(speed) }) {
+                            Text(if (preferences.speed == speed) "● ${speed}×" else "${speed}×", maxLines = 1)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { onSleepMode(!preferences.sleepMode) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("睡眠模式", fontWeight = FontWeight.SemiBold)
+                        Text("舒缓语速、轻微低音调，页面不自动滚动", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = preferences.sleepMode, onCheckedChange = onSleepMode)
+                }
+
+                Text("睡眠定时", fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    SpeechPresets.supportedSleepTimers.forEach { minutes ->
+                        val label = if (minutes == 0) "关闭" else "${minutes}分钟"
+                        TextButton(onClick = { onSleepTimer(minutes) }) {
+                            Text(if (preferences.sleepTimerMinutes == minutes) "● $label" else label, maxLines = 1)
+                        }
+                    }
+                }
+
+                Text("本地音色包", fontWeight = FontWeight.SemiBold)
+                voicePacks.forEach { pack ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            Text(pack.name, fontWeight = FontWeight.SemiBold)
+                            Text(pack.description, style = MaterialTheme.typography.bodySmall)
+                            Text("${pack.approximateSize} · ${if (pack.status == SpeechVoicePackStatus.Installed) "已检测到引擎" else "尚未安装"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = { onVoicePack(pack) }) {
+                                Text(if (pack.status == SpeechVoicePackStatus.Installed) "实验性试听与配置" else "实验性试听与安装说明")
+                            }
+                        }
+                    }
+                }
+
+                Text("阅读", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("字号", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onScale(scale - .1f) }) { Text("A−") }
+                    Text("${(scale * 100).toInt()}%")
+                    TextButton(onClick = { onScale(scale + .1f) }) { Text("A+") }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onTheme),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("深色阅读", modifier = Modifier.weight(1f))
+                    Switch(checked = dark, onCheckedChange = { onTheme() })
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
+}
+
+@Composable
+private fun MimoApiKeyDialog(
+    configured: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var apiKey by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("配置 MiMo API Key") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("密钥仅加密保存在此手机，不会写入仓库或 APK。云端朗读只会发送当前朗读分段。")
+                if (configured) {
+                    Text("已配置。为安全起见不会显示旧密钥；输入新值即可覆盖。", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    modifier = Modifier.fillMaxWidth().testTag("mimo-api-key"),
+                    label = { Text("MiMo API Key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(apiKey) }, enabled = apiKey.isNotBlank()) { Text("保存并启用") }
+        },
+        dismissButton = {
+            Row {
+                if (configured) TextButton(onClick = onRemove) { Text("清除密钥") }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DocumentScreen(
@@ -502,9 +775,15 @@ private fun ReaderScreen(
     }
     val context = LocalContext.current
     val speech by SpeechUiStore.state.collectAsState()
-    var followSpeech by remember(document.id) { mutableStateOf(true) }
-    var showVoicePicker by remember(document.id) { mutableStateOf(false) }
+    val speechPreferencesStore = remember { SpeechPreferencesStore(context) }
+    val mimoCredentials = remember { MimoTtsCredentialStore(context) }
+    var speechPreferences by remember(document.id) { mutableStateOf(speechPreferencesStore.get()) }
+    var showSettings by remember(document.id) { mutableStateOf(false) }
+    var showMimoApiKeyDialog by remember(document.id) { mutableStateOf(false) }
+    var mimoConfigured by remember { mutableStateOf(mimoCredentials.getApiKey() != null) }
     var offlineVoices by remember(document.id) { mutableStateOf<List<SpeechVoice>>(emptyList()) }
+    var voicePacks by remember(document.id) { mutableStateOf<List<SpeechVoicePack>>(emptyList()) }
+    var voicesLoading by remember(document.id) { mutableStateOf(false) }
     var voiceLoadError by remember(document.id) { mutableStateOf<String?>(null) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val repositoryRoot = remember(documents) { documents.firstOrNull()?.file?.let { first ->
@@ -524,65 +803,50 @@ private fun ReaderScreen(
             activeWebView.value = null
         }
     }
-    LaunchedEffect(speech.documentId, speech.blockId, followSpeech, document.id) {
-        if (speech.documentId == document.id && speech.blockId != null) {
-            val block = JSONObject.quote(speech.blockId)
-            activeWebView.value?.evaluateJavascript(
-                "window.repoleafSpeech && window.repoleafSpeech.highlight($block, $followSpeech)",
-                null,
-            )
-        }
-    }
-    LaunchedEffect(showVoicePicker) {
-        if (showVoicePicker) {
-            val engine = LocalTtsEngine(context)
-            runCatching { engine.availableVoices() }
+    LaunchedEffect(showSettings) {
+        if (showSettings) {
+            voicesLoading = true
+            voiceLoadError = null
+            voicePacks = SpeechVoicePackCatalog.available(context)
+            runCatching { LocalTtsCatalog.offlineChineseVoices(context) }
                 .onSuccess { offlineVoices = it; voiceLoadError = null }
                 .onFailure { voiceLoadError = it.message ?: "无法读取系统音色" }
-            engine.close()
+            voicesLoading = false
         }
     }
     fun startSpeech(voiceId: String? = null) {
-        SpeechController.play(context, document.id, document.file.canonicalPath, rendered.title, voiceId)
+        val selectedVoice = voiceId ?: speechPreferences.voiceId.takeIf(String::isNotBlank)
+        SpeechController.play(context, document.id, document.file.canonicalPath, rendered.title, selectedVoice)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    fun saveSpeechPreferences(value: SpeechPreferences) {
+        val normalized = SpeechPresets.normalize(value)
+        speechPreferencesStore.put(normalized)
+        speechPreferences = normalized
+    }
     Scaffold(
         containerColor = if (dark) Color(0xFF101418) else MaterialTheme.colorScheme.background,
         topBar = {
-            // A title plus seven text actions cannot fit on a phone. Keep all controls in a
-            // horizontally-scrollable toolbar instead of allowing app-bar slots to overlap.
-            Surface(color = if (dark) Color(0xFF101418) else MaterialTheme.colorScheme.background) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .heightIn(min = 56.dp)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onBack) { Text("‹ 返回", maxLines = 1) }
-                    TextButton(onClick = {
-                        if (speech.documentId == document.id && speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused, SpeechPlaybackStatus.Preparing)) {
-                            SpeechController.send(context, SpeechController.ACTION_TOGGLE)
-                        } else startSpeech()
-                    }, modifier = Modifier.testTag("speech-play")) {
-                        Text(if (speech.documentId == document.id && speech.status == SpeechPlaybackStatus.Playing) "暂停" else "听全文", maxLines = 1)
-                    }
-                    TextButton(onClick = onFavorite, modifier = Modifier.testTag("reader-favorite")) { Text(if (favorite) "★" else "☆") }
-                    TextButton(onClick = { followSpeech = !followSpeech }, modifier = Modifier.testTag("speech-follow")) { Text(if (followSpeech) "跟随" else "手动", maxLines = 1) }
-                    TextButton(onClick = { showVoicePicker = true }, modifier = Modifier.testTag("speech-voice")) { Text("音色", maxLines = 1) }
-                    TextButton(onClick = { onScale(scale - .1f) }) { Text("A−", maxLines = 1) }
-                    TextButton(onClick = { onScale(scale + .1f) }) { Text("A+", maxLines = 1) }
-                    TextButton(onClick = onTheme) { Text(if (dark) "浅色" else "深色", maxLines = 1) }
-                }
-            }
+            ReaderToolbar(
+                title = rendered.title,
+                dark = dark,
+                playing = speech.documentId == document.id && speech.status == SpeechPlaybackStatus.Playing,
+                favorite = favorite,
+                onBack = onBack,
+                onPlay = {
+                    if (speech.documentId == document.id && speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused, SpeechPlaybackStatus.Preparing)) {
+                        SpeechController.send(context, SpeechController.ACTION_TOGGLE)
+                    } else startSpeech()
+                },
+                onFavorite = onFavorite,
+                onSettings = { showSettings = true },
+            )
         },
     ) { padding ->
         AndroidView(
-            modifier = Modifier.fillMaxSize().padding(padding).testTag("markdown-reader"),
+            modifier = Modifier.fillMaxSize().padding(padding).zIndex(0f).testTag("markdown-reader"),
             factory = { ctx ->
                 WebView(ctx).apply {
                     activeWebView.value = this
@@ -636,24 +900,70 @@ private fun ReaderScreen(
             },
         )
     }
-    if (showVoicePicker) AlertDialog(
-        onDismissRequest = { showVoicePicker = false },
-        title = { Text("选择离线中文音色") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (offlineVoices.isEmpty() && voiceLoadError == null) Text("正在检测系统离线音色…")
-                voiceLoadError?.let { Text("$it。请在系统“文字转语音输出”中安装中文离线语音数据。") }
-                offlineVoices.forEach { voice ->
-                    TextButton(onClick = { showVoicePicker = false; startSpeech(voice.id) }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text(voice.name)
-                            Text("${voice.locale.displayName} · 离线", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
+    if (showSettings) SpeechAndReadingSettingsDialog(
+        preferences = speechPreferences,
+        voices = offlineVoices,
+        voicePacks = voicePacks,
+        voicesLoading = voicesLoading,
+        voiceLoadError = voiceLoadError,
+        mimoConfigured = mimoConfigured,
+        dark = dark,
+        onDismiss = { showSettings = false },
+        onVoice = { voice ->
+            saveSpeechPreferences(speechPreferences.copy(voiceId = voice.id))
+            if (speech.documentId == document.id && speech.status != SpeechPlaybackStatus.Idle) startSpeech(voice.id)
+        },
+        onMimoEnabled = { enabled ->
+            saveSpeechPreferences(speechPreferences.copy(mimoEnabled = enabled))
+        },
+        onMimoVoice = { voice ->
+            saveSpeechPreferences(speechPreferences.copy(mimoVoice = voice))
+        },
+        onMimoStyle = { style ->
+            saveSpeechPreferences(speechPreferences.copy(mimoStyle = style))
+        },
+        onConfigureMimo = { showMimoApiKeyDialog = true },
+        onSpeed = { speed ->
+            saveSpeechPreferences(speechPreferences.copy(speed = speed))
+            if (speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused)) {
+                SpeechController.send(context, SpeechController.ACTION_SET_SPEED, speed)
             }
         },
-        confirmButton = { TextButton(onClick = { showVoicePicker = false }) { Text("关闭") } },
+        onSleepMode = { enabled ->
+            val speed = if (enabled) SpeechPresets.SLEEP_SPEED else 1f
+            saveSpeechPreferences(speechPreferences.copy(sleepMode = enabled, speed = speed))
+            if (speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused)) {
+                SpeechController.setSleepMode(context, enabled)
+            }
+        },
+        onSleepTimer = { minutes ->
+            saveSpeechPreferences(speechPreferences.copy(sleepTimerMinutes = minutes))
+            if (speech.status in setOf(SpeechPlaybackStatus.Playing, SpeechPlaybackStatus.Paused)) {
+                SpeechController.setSleepTimer(context, minutes)
+            }
+        },
+        onManageSystemVoice = { SpeechController.openSystemTtsSettings(context) },
+        onConfigureVoiceEngine = { enginePackage -> SpeechController.openTtsEngineSettings(context, enginePackage) },
+        onVoicePack = { pack -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pack.sourceUrl))) },
+        onScale = onScale,
+        scale = scale,
+        onTheme = onTheme,
+    )
+    if (showMimoApiKeyDialog) MimoApiKeyDialog(
+        configured = mimoConfigured,
+        onDismiss = { showMimoApiKeyDialog = false },
+        onSave = { apiKey ->
+            mimoCredentials.putApiKey(apiKey)
+            mimoConfigured = true
+            saveSpeechPreferences(speechPreferences.copy(mimoEnabled = true))
+            showMimoApiKeyDialog = false
+        },
+        onRemove = {
+            mimoCredentials.removeApiKey()
+            mimoConfigured = false
+            saveSpeechPreferences(speechPreferences.copy(mimoEnabled = false))
+            showMimoApiKeyDialog = false
+        },
     )
 }
 

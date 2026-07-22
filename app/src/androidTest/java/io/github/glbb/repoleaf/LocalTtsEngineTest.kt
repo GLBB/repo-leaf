@@ -3,6 +3,7 @@ package io.github.glbb.repoleaf
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.glbb.repoleaf.speech.LocalTtsEngine
+import io.github.glbb.repoleaf.speech.LocalTtsCatalog
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -12,6 +13,19 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class LocalTtsEngineTest {
+    @Test fun catalog_keeps_the_engine_identity_with_each_offline_voice() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val engines = LocalTtsCatalog.installedEngines(context)
+        val voices = LocalTtsCatalog.offlineChineseVoices(context)
+
+        assumeTrue("device has no installed offline Chinese voice", voices.isNotEmpty())
+        assertTrue(voices.all { voice ->
+            engines.any { it.packageName == voice.enginePackage } &&
+                voice.id.startsWith("${voice.enginePackage}:") &&
+                voice.engineName.isNotBlank()
+        })
+    }
+
     @Test fun installedOfflineChineseVoiceCanSynthesizePrivateAudioFile() {
         runBlocking {
             val context = InstrumentationRegistry.getInstrumentation().targetContext

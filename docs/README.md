@@ -13,6 +13,7 @@
 - [语音朗读技术方案](voice-reading-technical.md)：本地 TTS 分段合成、Media3 后台播放、缓存、隐私与实现顺序
 - [语音朗读测试方案](voice-reading-test-plan.md)：设备矩阵、中文质量、后台稳定性、隐私测试与发布门禁
 - [语音朗读验证记录](voice-reading-validation.md)：构建、设备验证结果和离线音色前置条件
+- [音色丰富与睡眠朗读方案](voice-richness-plan.md)：多引擎、Kokoro 离线音色包、统一设置和睡眠体验验收
 
 ## 背景资料
 
@@ -31,3 +32,4 @@
 | 语音朗读技术方案 | Draft | `0.2.x` |
 | 语音朗读测试方案 | Draft | `0.2.x` |
 | 语音朗读验证记录 | In progress | `0.2.x` |
+| 音色丰富与睡眠朗读方案 | In progress | `0.2.x` |
